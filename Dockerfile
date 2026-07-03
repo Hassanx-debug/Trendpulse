@@ -10,8 +10,7 @@ RUN npm install
 COPY . .
 
 # Build the client-side SPA and compile the Express server via esbuild
-# Change this line in your Dockerfile:
-    RUN npm run build:backend
+RUN npm run build && npm run build:backend
 
 # Stage 2: Production Execution Environment
 FROM node:20-alpine AS runner
