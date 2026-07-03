@@ -1,0 +1,27 @@
+services:
+  # TrendPulse Backend API & Scraper Service
+  - type: web
+    name: trendpulse-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: GEMINI_API_KEY
+        sync: false # Set securely in the Render Dashboard
+      - key: DATABASE_URL
+        sync: false # Set to Supabase PostgreSQL connection string
+      - key: SUPABASE_URL
+        sync: false # Set to Supabase project URL
+      - key: SUPABASE_ANON_KEY
+        sync: false # Set to Supabase anonymous API key
+      - key: APP_URL
+        value: https://trendpulse-backend.onrender.com
+    disk:
+      name: trendpulse-disk
+      mountPath: /app/data
+      sizeGB: 1

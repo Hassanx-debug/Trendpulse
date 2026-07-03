@@ -1,0 +1,6 @@
+{
+  "name": "TrendPulse",
+  "description": "A real-time news intelligence aggregator tracking the earliest breaking headlines from Reddit, Hacker News, Twitter, Bluesky, and Google News.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
