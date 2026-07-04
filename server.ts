@@ -29,6 +29,19 @@ initDb();
 // Body parser
 app.use(express.json());
 
+// Enable CORS middleware for client-side API requests
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 // API: List paginated stories
 app.get('/api/stories', (req, res) => {
   try {
@@ -183,25 +196,23 @@ app.get('/api/cron/cleanup', (req, res) => {
 
 // Setup dev vs production servers
 async function start() {
+  // Spawn the background data-intelligence fetch loop (5-minute intervals) regardless of environment
+  console.log('Spawning background data-intelligence fetch loop (5-minute intervals)...');
+  setInterval(() => {
+    executeFetchAll().catch((err) => console.error('Background fetch failure:', err));
+  }, 5 * 60 * 1000);
+  
+  // Run an initial quick fetch in the background as well after startup
+  setTimeout(() => {
+    executeFetchAll().catch((err) => console.error('Initial background fetch failure:', err));
+  }, 5000);
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
     });
     app.use(vite.middlewares);
-
-    // Development auto-fetch routine to make the dashboard feel active:
-    // Every 5 minutes, we fetch all active external endpoints
-    console.log('Spawning background data-intelligence fetch loop (5-minute intervals)...');
-    setInterval(() => {
-      executeFetchAll().catch((err) => console.error('Background fetch failure:', err));
-    }, 5 * 60 * 1000);
-    
-    // Run an initial quick fetch in the background as well
-    setTimeout(() => {
-      executeFetchAll().catch((err) => console.error('Initial background fetch failure:', err));
-    }, 5000);
-
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));

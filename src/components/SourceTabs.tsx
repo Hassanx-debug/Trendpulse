@@ -28,6 +28,7 @@ export default function SourceTabs({ activeTab, onChange }: SourceTabsProps) {
     { id: 'twitter', label: 'Twitter', icon: Twitter, color: 'hover:text-sky-400' },
     { id: 'bluesky', label: 'Bluesky', icon: MessageCircle, color: 'hover:text-brand-cyan' },
     { id: 'googlenews', label: 'Google News', icon: Globe, color: 'hover:text-brand-accent' },
+    { id: 'gemini', label: 'Gemini Grounding', icon: Flame, color: 'hover:text-emerald-400' },
     { id: 'cross_platform', label: 'Cross-Platform Alerts', icon: Layers, color: 'hover:text-brand-trending' },
   ];
 

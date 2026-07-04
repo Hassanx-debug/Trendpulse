@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type SourceType = 'reddit' | 'hackernews' | 'twitter' | 'bluesky' | 'googlenews';
+export type SourceType = 'reddit' | 'hackernews' | 'twitter' | 'bluesky' | 'googlenews' | 'gemini';
 
 export interface Story {
   id: string;
@@ -52,4 +52,5 @@ export interface SourceHealth {
   healthy: boolean;
   last_fetched: string | null;
   error?: string;
+  count?: number;
 }

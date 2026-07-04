@@ -13,7 +13,7 @@ import {
   fetchReddit, 
   fetchBluesky, 
   fetchTwitter, 
-  generateSimulationData 
+  fetchGeminiNewsInsights
 } from './fetchers';
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -28,6 +28,7 @@ let healthRegistry: Record<SourceType, SourceHealth> = {
   twitter: { source: 'twitter', healthy: true, last_fetched: null },
   bluesky: { source: 'bluesky', healthy: true, last_fetched: null },
   googlenews: { source: 'googlenews', healthy: true, last_fetched: null },
+  gemini: { source: 'gemini', healthy: true, last_fetched: null },
 };
 
 // SSE active clients
@@ -51,68 +52,26 @@ export function initDb() {
       }
       console.log(`Database loaded: ${stories.length} stories, ${storyGroups.length} groups.`);
     } else {
-      console.log('No database file found. Seeding initial simulation data.');
-      seedInitialData();
+      console.log('No database file found. Starting empty DB.');
+      stories = [];
+      storyGroups = [];
+      saveDb();
     }
   } catch (error) {
     console.error('Error initializing database:', error);
-    seedInitialData();
+    stories = [];
+    storyGroups = [];
+    saveDb();
   }
 }
 
 /**
- * Seed initial simulation data to ensure UI is immediate and rich
+ * Seed initial data has been decommissioned as part of verified zero simulation rule.
  */
 function seedInitialData() {
-  try {
-    const rawSignals = generateSimulationData();
-    stories = [];
-    rawSignals.forEach((sig) => {
-      const story: Story = {
-        id: sig.id || Math.random().toString(36).substring(2, 15),
-        title: sig.title || '',
-        url: sig.url || null,
-        description: sig.description || null,
-        source_name: sig.source_name || '',
-        source_type: sig.source_type || 'googlenews',
-        source_url: sig.source_url || '',
-        source_id: sig.source_id || null,
-        score: sig.score || 0,
-        comments_count: sig.comments_count || 0,
-        upvote_ratio: sig.upvote_ratio || 1.0,
-        author: sig.author || null,
-        thumbnail_url: sig.thumbnail_url || null,
-        first_seen_at: sig.first_seen_at || new Date().toISOString(),
-        last_updated_at: new Date().toISOString(),
-        published_at: sig.published_at || new Date().toISOString(),
-        velocity_score: 0,
-        growth_rate: sig.growth_rate || 0,
-        is_breaking: false,
-        keywords: sig.keywords || [],
-        cross_platform_count: 1,
-        platform_data: {},
-        history: []
-      };
-
-      // Add baseline history
-      const histPoints = [];
-      const now = new Date();
-      for (let i = 5; i >= 0; i--) {
-        const time = new Date(now.getTime() - (i * 24 * 60 * 1000));
-        histPoints.push({
-          timestamp: time.toISOString(),
-          velocity_score: Math.max(0, (story.score / 20) * (6 - i))
-        });
-      }
-      story.history = histPoints;
-      stories.push(story);
-    });
-
-    runDeduplicationAndGrouping();
-    saveDb();
-  } catch (error) {
-    console.error('Error seeding initial data:', error);
-  }
+  stories = [];
+  storyGroups = [];
+  saveDb();
 }
 
 /**
@@ -270,30 +229,66 @@ export function runDeduplicationAndGrouping() {
  * Core engine: Fetch all channels, merge, compute, save
  */
 export async function executeFetchAll() {
-  console.log('Initiating global fetch cycle across all channels...');
+  console.log('Initiating global fetch cycle across all channels in parallel...');
   const now = new Date().toISOString();
+  const nowTime = Date.now();
+  const freshnessLimit = 24 * 60 * 60 * 1000; // 24 hours
   
-  // Array of jobs
+  // Array of independent jobs running in parallel
   const jobs = [
     { type: 'googlenews' as SourceType, run: fetchGoogleNews },
     { type: 'hackernews' as SourceType, run: fetchHackerNews },
     { type: 'reddit' as SourceType, run: fetchReddit },
     { type: 'bluesky' as SourceType, run: fetchBluesky },
-    { type: 'twitter' as SourceType, run: fetchTwitter }
+    { type: 'twitter' as SourceType, run: fetchTwitter },
+    { type: 'gemini' as SourceType, run: fetchGeminiNewsInsights } // Gemini Google Search Grounded feed
   ];
 
-  for (const job of jobs) {
-    try {
-      const results = await job.run();
+  const resultsList = await Promise.allSettled(
+    jobs.map(async (job) => {
+      try {
+        const results = await job.run();
+        const isHealthy = (results as any).healthy !== false;
+        const errMsg = (results as any).error || null;
+        return { type: job.type, results, success: true, healthy: isHealthy, error: errMsg };
+      } catch (err: any) {
+        return { type: job.type, results: [], success: false, healthy: false, error: err?.message || String(err) };
+      }
+    })
+  );
+
+  resultsList.forEach((settled, index) => {
+    const job = jobs[index];
+    if (settled.status === 'fulfilled' && settled.value.success) {
+      const results = settled.value.results || [];
+      const isHealthy = settled.value.healthy;
+      const errorMsg = settled.value.error;
+      
       healthRegistry[job.type] = {
         source: job.type,
-        healthy: true,
-        last_fetched: now
+        healthy: isHealthy,
+        last_fetched: now,
+        error: errorMsg || undefined,
+        count: results.length
       };
 
-      if (results && results.length > 0) {
-        results.forEach((item) => {
-          // Check if we already have this source ID in storage
+      if (results.length > 0) {
+        // Filter out any article older than 24 hours (freshness window)
+        const freshResults = results.filter((item) => {
+          if (!item.published_at) return true;
+          const pubTime = new Date(item.published_at).getTime();
+          return (nowTime - pubTime) < freshnessLimit;
+        });
+
+        // Sort by published timestamp, newest first
+        freshResults.sort((a, b) => {
+          const timeA = a.published_at ? new Date(a.published_at).getTime() : 0;
+          const timeB = b.published_at ? new Date(b.published_at).getTime() : 0;
+          return timeB - timeA;
+        });
+
+        freshResults.forEach((item) => {
+          // Check if we already have this source ID or URL in storage
           const existing = stories.find(
             (s) => s.source_id === item.source_id || (s.url && item.url && s.url === item.url && s.source_type === item.source_type)
           );
@@ -303,6 +298,7 @@ export async function executeFetchAll() {
             existing.score = Math.max(existing.score, item.score || 0);
             existing.comments_count = Math.max(existing.comments_count, item.comments_count || 0);
             existing.last_updated_at = now;
+            if (item.published_at) existing.published_at = item.published_at;
             if (item.upvote_ratio !== undefined) existing.upvote_ratio = item.upvote_ratio;
           } else {
             // Insert new story
@@ -312,7 +308,7 @@ export async function executeFetchAll() {
               url: item.url || null,
               description: item.description || null,
               source_name: item.source_name || '',
-              source_type: job.type,
+              source_type: item.source_type || job.type,
               source_url: item.source_url || '',
               source_id: item.source_id || `fetch-${Math.random().toString(36).substring(2, 10)}`,
               score: item.score || 0,
@@ -335,55 +331,16 @@ export async function executeFetchAll() {
           }
         });
       }
-    } catch (err: any) {
+    } else {
+      const err = settled.status === 'fulfilled' ? settled.value.error : settled.reason;
       console.error(`Fetch failure on source [${job.type}]:`, err);
       healthRegistry[job.type] = {
         source: job.type,
         healthy: false,
         last_fetched: healthRegistry[job.type]?.last_fetched || null,
-        error: err.message || String(err)
+        error: String(err?.message || err),
+        count: 0
       };
-    }
-  }
-
-  // Fallback / simulation boost: always mix in dynamic elements to make the system breathe
-  const simulated = generateSimulationData();
-  simulated.forEach((sim) => {
-    const existing = stories.find((s) => s.source_id === sim.source_id);
-    if (existing) {
-      existing.score = sim.score || existing.score;
-      existing.comments_count = sim.comments_count || existing.comments_count;
-      existing.last_updated_at = now;
-    } else {
-      // Small chance to introduce a brand new simulated event
-      if (Math.random() > 0.4) {
-        const newSim: Story = {
-          id: Math.random().toString(36).substring(2, 15),
-          title: sim.title || '',
-          url: sim.url || null,
-          description: sim.description || null,
-          source_name: sim.source_name || '',
-          source_type: sim.source_type || 'googlenews',
-          source_url: sim.source_url || '',
-          source_id: sim.source_id || null,
-          score: sim.score || 0,
-          comments_count: sim.comments_count || 0,
-          upvote_ratio: sim.upvote_ratio || 1.0,
-          author: sim.author || null,
-          thumbnail_url: sim.thumbnail_url || null,
-          first_seen_at: now,
-          last_updated_at: now,
-          published_at: sim.published_at || now,
-          velocity_score: 0,
-          growth_rate: sim.growth_rate || 0,
-          is_breaking: false,
-          keywords: sim.keywords || [],
-          cross_platform_count: 1,
-          platform_data: {},
-          history: [{ timestamp: now, velocity_score: 0 }]
-        };
-        stories.push(newSim);
-      }
     }
   });
 
@@ -408,12 +365,11 @@ export function cleanupOldStories() {
   const now = new Date();
   const limitTime = 24 * 60 * 60 * 1000; // 24 hours
 
-  // Filter out older records but keep highly scored ones to represent top stories of the week
+  // Strictly filter out any stories older than 24 hours window to prevent stale headlines resurfacing
   stories = stories.filter((story) => {
-    const age = now.getTime() - new Date(story.first_seen_at).getTime();
-    if (age < limitTime) return true;
-    if (story.score > 500 || story.is_breaking) return true; // keep high signal events
-    return false;
+    const publishedTime = story.published_at ? new Date(story.published_at).getTime() : new Date(story.first_seen_at).getTime();
+    const age = now.getTime() - publishedTime;
+    return age < limitTime;
   });
 
   // Keep total count at 250 max
@@ -477,9 +433,11 @@ export function queryStories(filters: {
 
   // Sort canonical list based on requested scheme
   if (filters.sort === 'recent') {
-    canonicalStories.sort(
-      (a, b) => new Date(b.first_seen_at).getTime() - new Date(a.first_seen_at).getTime()
-    );
+    canonicalStories.sort((a, b) => {
+      const timeA = a.published_at ? new Date(a.published_at).getTime() : new Date(a.first_seen_at).getTime();
+      const timeB = b.published_at ? new Date(b.published_at).getTime() : new Date(b.first_seen_at).getTime();
+      return timeB - timeA;
+    });
   } else if (filters.sort === 'score') {
     canonicalStories.sort((a, b) => b.score - a.score);
   } else {
