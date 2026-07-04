@@ -18,7 +18,7 @@ import {
   unregisterSseClient,
   runDeduplicationAndGrouping,
   saveDb
-} from './server/db';
+} from '../server/db';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -127,10 +127,9 @@ app.get('/api/realtime', (req, res) => {
   });
 });
 
-// CRON: Run combined fetcher
+// CRON/Refresh: Run combined fetcher
 app.get('/api/cron/fetch-all', async (req, res) => {
   try {
-    // Basic protection (can accept auth/secret header or query param if required)
     await executeFetchAll();
     res.json({ success: true, timestamp: new Date().toISOString() });
   } catch (err: any) {
@@ -141,7 +140,7 @@ app.get('/api/cron/fetch-all', async (req, res) => {
 // Individual crons as specified by routing
 app.get('/api/cron/fetch-reddit', async (req, res) => {
   try {
-    await executeFetchAll(); // For simplify/robustness, call the grouped manager
+    await executeFetchAll();
     res.json({ success: true, channel: 'reddit' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -196,17 +195,6 @@ app.get('/api/cron/cleanup', (req, res) => {
 
 // Setup dev vs production servers
 async function start() {
-  // Spawn the background data-intelligence fetch loop (5-minute intervals) regardless of environment
-  console.log('Spawning background data-intelligence fetch loop (5-minute intervals)...');
-  setInterval(() => {
-    executeFetchAll().catch((err) => console.error('Background fetch failure:', err));
-  }, 5 * 60 * 1000);
-  
-  // Run an initial quick fetch in the background as well after startup
-  setTimeout(() => {
-    executeFetchAll().catch((err) => console.error('Initial background fetch failure:', err));
-  }, 5000);
-
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -221,9 +209,13 @@ async function start() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`TrendPulse intelligence engine online on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`TrendPulse intelligence engine online on http://localhost:${PORT}`);
+    });
+  }
 }
 
 start();
+
+export default app;
